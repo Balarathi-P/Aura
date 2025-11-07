@@ -1,104 +1,132 @@
 import React, { createContext, useState, useContext, ReactNode, useEffect } from 'react';
 import { ClothingItem, WardrobeContextType } from '../types';
-import { fetchWardrobe, deleteWardrobeItem } from '../services/api';
-
-// The initial set of clothes when the app starts.
-const initialWardrobe: ClothingItem[] = [
-  {
-    id: '1',
-    imageData: 'https://images.unsplash.com/photo-1583743814966-8936f5b7be1a?q=80&w=464&auto=format&fit=crop',
-    mimeType: 'image/jpeg',
-    category: 'tops',
-    color: 'Black',
-    pattern: 'graphic',
-    style: 'streetwear',
-    season: 'all-season',
-    description: 'Black Graphic T-Shirt',
-  },
-  {
-    id: '2',
-    imageData: 'https://images.unsplash.com/photo-1602293589914-9e19577a756b?q=80&w=387&auto=format&fit=crop',
-    mimeType: 'image/jpeg',
-    category: 'bottoms',
-    color: 'Blue',
-    pattern: 'solid',
-    style: 'casual',
-    season: 'all-season',
-    description: 'Blue Denim Jeans',
-  },
-  {
-    id: '3',
-    imageData: 'https://images.unsplash.com/photo-1595950653106-6c9ebd614d3a?q=80&w=387&auto=format&fit=crop',
-    mimeType: 'image/jpeg',
-    category: 'shoes',
-    color: 'White',
-    pattern: 'solid',
-    style: 'casual',
-    season: 'all-season',
-    description: 'White Sneakers',
-  },
-  {
-    id: '4',
-    imageData: 'https://images.unsplash.com/photo-1551028719-00167b16eac5?q=80&w=435&auto=format&fit=crop',
-    mimeType: 'image/jpeg',
-    category: 'outerwear',
-    color: 'Brown',
-    pattern: 'solid',
-    style: 'casual',
-    season: 'fall',
-    description: 'Brown Leather Jacket',
-  },
-];
-
+import { supabase } from '../lib/supabase';
+import { useAuth } from './AuthContext';
 
 const WardrobeContext = createContext<WardrobeContextType | undefined>(undefined);
 
 export const WardrobeProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [wardrobe, setWardrobe] = useState<ClothingItem[]>(initialWardrobe);
+  const [wardrobe, setWardrobe] = useState<ClothingItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
+  const { user } = useAuth();
 
-  // Load from backend on mount; if backend fails, keep initialWardrobe as fallback
+  // Load wardrobe from Supabase when user is authenticated
   useEffect(() => {
-    let mounted = true;
-    setLoading(true);
-    fetchWardrobe()
-      .then((items: ClothingItem[]) => {
-        if (mounted && Array.isArray(items) && items.length > 0) {
-          setWardrobe(items as ClothingItem[]);
-        }
-      })
-      .catch(() => {
-        // keep the seeded initialWardrobe on failure
-      })
-      .finally(() => mounted && setLoading(false));
-    return () => { mounted = false };
-  }, []);
+    if (user) {
+      fetchWardrobe();
+    } else {
+      setWardrobe([]);
+    }
+  }, [user]);
 
-  const addItem = (item: ClothingItem) => {
-    // local state update; persistence should be done by callers using the API helper
-    setWardrobe((prev) => [...prev, item]);
+  const fetchWardrobe = async () => {
+    if (!user) return;
+    
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('wardrobe')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      // Convert database format to ClothingItem format
+      const items: ClothingItem[] = (data || []).map(item => ({
+        id: item.id,
+        imageData: item.image_data,
+        mimeType: item.mime_type,
+        category: item.category,
+        color: item.color || '',
+        pattern: item.pattern,
+        style: item.style || 'casual',
+        season: item.season || 'all-season',
+        description: item.description || '',
+      }));
+
+      setWardrobe(items);
+    } catch (error) {
+      console.error('Error fetching wardrobe:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const deleteItem = (id: string) => {
+  const addItem = async (item: ClothingItem) => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('wardrobe')
+        .insert({
+          user_id: user.id,
+          image_data: item.imageData,
+          mime_type: item.mimeType,
+          category: item.category,
+          color: item.color,
+          pattern: item.pattern,
+          style: item.style,
+          season: item.season,
+          description: item.description,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Add to local state with the new ID from database
+      const newItem: ClothingItem = {
+        id: data.id,
+        imageData: data.image_data,
+        mimeType: data.mime_type,
+        category: data.category,
+        color: data.color || '',
+        pattern: data.pattern,
+        style: data.style || 'casual',
+        season: data.season || 'all-season',
+        description: data.description || '',
+      };
+
+      setWardrobe((prev) => [newItem, ...prev]);
+    } catch (error) {
+      console.error('Error adding item:', error);
+      throw error;
+    }
+  };
+
+  const deleteItem = async (id: string) => {
+    if (!user) return;
+
     // Optimistically update UI
     setWardrobe((prev) => prev.filter(item => item.id !== id));
-    // Try to delete from backend, ignore errors (could show toast instead)
-    deleteWardrobeItem(id).catch(() => {
-      // If delete failed, refetch wardrobe could be implemented; for now we ignore
-    });
+
+    try {
+      const { error } = await supabase
+        .from('wardrobe')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error deleting item:', error);
+      // Refetch to restore state if delete failed
+      fetchWardrobe();
+    }
   };
 
   const getItemById = (id: string | number): ClothingItem | undefined => {
     return wardrobe.find(item => String(item.id) === String(id));
-  }
+  };
 
   const contextValue = {
-      wardrobe,
-      addItem,
-      deleteItem,
-      getItemById,
-      loading,
-      setLoading,
+    wardrobe,
+    addItem,
+    deleteItem,
+    getItemById,
+    loading,
+    setLoading,
   };
 
   return (

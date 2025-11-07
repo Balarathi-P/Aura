@@ -1,9 +1,19 @@
-const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3002';
+// This file is now mostly deprecated since we're using Supabase directly
+// Keeping it for backwards compatibility if needed
+
+import { supabase } from '../lib/supabase';
 
 export async function fetchWardrobe() {
-  const res = await fetch(`${API_BASE}/api/wardrobe`);
-  if (!res.ok) throw new Error('Failed to fetch wardrobe');
-  return res.json();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+
+  const { data, error } = await supabase
+    .from('wardrobe')
+    .select('*')
+    .eq('user_id', user.id);
+
+  if (error) throw error;
+  return data;
 }
 
 export async function addWardrobeItem(item: {
@@ -16,36 +26,46 @@ export async function addWardrobeItem(item: {
   season?: string;
   description?: string;
 }) {
-  const res = await fetch(`${API_BASE}/api/wardrobe`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(item),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || 'Failed to add item');
-  }
-  return res.json();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+
+  const { data, error } = await supabase
+    .from('wardrobe')
+    .insert({
+      user_id: user.id,
+      image_data: item.imageData,
+      mime_type: item.mimeType,
+      category: item.category,
+      color: item.color,
+      pattern: item.pattern,
+      style: item.style,
+      season: item.season,
+      description: item.description,
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
 }
 
 export async function deleteWardrobeItem(id: string) {
-  const res = await fetch(`${API_BASE}/api/wardrobe/${id}`, { method: 'DELETE' });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || 'Failed to delete item');
-  }
-  return res.json();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+
+  const { error } = await supabase
+    .from('wardrobe')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', user.id);
+
+  if (error) throw error;
+  return { message: 'Item deleted successfully' };
 }
 
+// Image analysis is still done client-side with Gemini
 export async function analyzeImage(imageBase64: string, mimeType: string) {
-  const res = await fetch(`${API_BASE}/api/analyze`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ imageBase64, mimeType }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || 'Failed to analyze image');
-  }
-  return res.json();
+  // This would require server-side implementation
+  // For now, use the client-side analyzeClothingImage from geminiService
+  throw new Error('Use analyzeClothingImage from geminiService instead');
 }
